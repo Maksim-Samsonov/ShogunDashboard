@@ -97,6 +97,32 @@ class HyperDeckClient(QObject):
             await self._close_connection()
             self.connection_signal.emit(self.device_id, False)
             return False
+            
+    async def check_connection(self) -> bool:
+        """
+        Проверяет статус подключения к устройству
+        
+        Returns:
+            bool: True если устройство подключено, иначе False
+        """
+        return self.connected and self._transport is not None
+    
+    async def is_recording(self) -> bool:
+        """
+        Проверяет, ведется ли запись на устройстве
+        
+        Returns:
+            bool: True если запись активна, иначе False
+        """
+        if not self.connected:
+            return False
+            
+        try:
+            await self.update_status()
+            return self.recording
+        except Exception as e:
+            self.logger.error(f"HyperDeck {self.device_id}: Ошибка проверки статуса записи: {e}")
+            return False
     
     async def disconnect(self) -> None:
         """Отключение от устройства HyperDeck"""
@@ -150,6 +176,18 @@ class HyperDeckClient(QObject):
             self.error_signal.emit(self.device_id, f"Ошибка запуска записи: {error_msg}")
         
         return success
+        
+    async def start_recording(self, name: Optional[str] = None) -> bool:
+        """
+        Синоним для record() для совместимости с API
+        
+        Args:
+            name: Имя для записи (опционально)
+            
+        Returns:
+            bool: True если запись успешно запущена, иначе False
+        """
+        return await self.record(name)
     
     async def stop(self) -> bool:
         """
@@ -177,6 +215,15 @@ class HyperDeckClient(QObject):
             self.error_signal.emit(self.device_id, f"Ошибка остановки записи: {error_msg}")
         
         return success
+        
+    async def stop_recording(self) -> bool:
+        """
+        Синоним для stop() для совместимости с API
+        
+        Returns:
+            bool: True если запись успешно остановлена, иначе False
+        """
+        return await self.stop()
     
     async def update_clips(self) -> List[Dict[str, str]]:
         """

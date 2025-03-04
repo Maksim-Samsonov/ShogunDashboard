@@ -31,7 +31,7 @@ DEFAULT_SETTINGS = {
     "osc_port": 5555,
     "osc_enabled": True,
     "osc_broadcast_port": 9000,  # Порт для отправки OSC-сообщений
-    "osc_broadcast_ip": "255.255.255.255",  # IP для отправки OSC-сообщений (широковещательный)
+    "osc_broadcast_ip": "127.0.0.1",  # IP для отправки OSC-сообщений
     # Настройки HyperDeck устройств
     "hyperdeck_enabled": True,  # Включение поддержки HyperDeck
     "hyperdeck_devices": [
@@ -41,8 +41,6 @@ DEFAULT_SETTINGS = {
     ],
     "hyperdeck_sync_with_shogun": True  # Синхронизировать запись с Shogun
 }
-
-print("DEFAULT_SETTINGS['hyperdeck_enabled'] =", DEFAULT_SETTINGS['hyperdeck_enabled'])
 
 # Менеджер настроек
 settings = QSettings("ShogunOSC", "ShogunOSCApp")
@@ -73,17 +71,21 @@ def load_settings() -> Dict[str, Any]:
                         value = json.loads(value)
                     except json.JSONDecodeError:
                         value = DEFAULT_SETTINGS[key]
+                # Явное преобразование hyperdeck_enabled в bool
+                elif key == 'hyperdeck_enabled':
+                    if isinstance(value, str):
+                        value = value.lower() == 'true'
+                    else:
+                        value = bool(value)
                 settings_dict[key] = value
-                
-                # Отладочный вывод для hyperdeck_enabled
-                if key == 'hyperdeck_enabled':
-                    print(f"LOADED hyperdeck_enabled from settings: {value}, type: {type(value)}")
     except Exception as e:
         logging.getLogger('ShogunOSC').error(f"Ошибка при загрузке настроек: {e}")
         # В случае ошибки используем настройки по умолчанию
         settings_dict = DEFAULT_SETTINGS.copy()
     
-    print(f"FINAL settings_dict['hyperdeck_enabled'] = {settings_dict.get('hyperdeck_enabled')}")
+    # Явно устанавливаем тип hyperdeck_enabled
+    settings_dict['hyperdeck_enabled'] = bool(settings_dict.get('hyperdeck_enabled', DEFAULT_SETTINGS['hyperdeck_enabled']))
+    
     return settings_dict
 
 def save_settings(settings_dict: Dict[str, Any]) -> None:
@@ -120,12 +122,11 @@ DARK_MODE = app_settings.get('dark_mode', False)
 # Настройки OSC-сервера
 DEFAULT_OSC_IP = app_settings.get('osc_ip', '0.0.0.0')
 DEFAULT_OSC_PORT = app_settings.get('osc_port', 5555)
-DEFAULT_OSC_BROADCAST_IP = app_settings.get('osc_broadcast_ip', '255.255.255.255')
+DEFAULT_OSC_BROADCAST_IP = app_settings.get('osc_broadcast_ip', '127.0.0.1')
 DEFAULT_OSC_BROADCAST_PORT = app_settings.get('osc_broadcast_port', 9000)
 
 # Настройки HyperDeck
-HYPERDECK_ENABLED = app_settings.get('hyperdeck_enabled', True)
-print(f"FINAL HYPERDECK_ENABLED = {HYPERDECK_ENABLED}, type: {type(HYPERDECK_ENABLED)}")
+HYPERDECK_ENABLED = bool(app_settings.get('hyperdeck_enabled', True))
 HYPERDECK_SYNC_WITH_SHOGUN = app_settings.get('hyperdeck_sync_with_shogun', True)
 HYPERDECK_DEVICES = app_settings.get("hyperdeck_devices", DEFAULT_SETTINGS["hyperdeck_devices"])
 

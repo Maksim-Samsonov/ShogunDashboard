@@ -103,6 +103,9 @@ class OSCServer:
         """
         if self.running:
             self.logger.warning("OSC-сервер уже запущен")
+            # Уведомляем о статусе
+            if self.status_callback:
+                self.status_callback(True)
             return True
         
         try:

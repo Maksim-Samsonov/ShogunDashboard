@@ -135,20 +135,25 @@ class ShogunWorker(QThread):
         try:
             if not self.capture:
                 return
-                
+            
             # Получаем текущее имя захвата
-            result, capture_name = self.capture.capture_name()
+            result = self.capture.capture_name()
             
             # Проверяем успешность запроса
-            if not result:
-                self.logger.debug(f"Не удалось получить имя захвата: {result}")
-                return
+            if isinstance(result, tuple) and len(result) > 0:
+                if not result[0]:  # Первый элемент - статус операции
+                    self.logger.debug(f"Не удалось получить имя захвата: {result}")
+                    return
                 
-            # Если имя изменилось, отправляем сигнал
-            if capture_name != self._current_capture_name:
-                self.logger.info(f"Имя захвата изменилось: '{self._current_capture_name}' -> '{capture_name}'")
-                self._current_capture_name = capture_name
-                self.capture_name_changed_signal.emit(capture_name)
+                if len(result) > 1:
+                    capture_name = result[1]
+                    # Если имя изменилось, отправляем сигнал
+                    if capture_name != self._current_capture_name:
+                        self.logger.info(f"Имя захвата изменилось: '{self._current_capture_name}' -> '{capture_name}'")
+                        self._current_capture_name = capture_name
+                        self.capture_name_changed_signal.emit(capture_name)
+            else:
+                self.logger.debug(f"Неожиданный формат ответа при получении имени захвата: {result}")
                 
         except Exception as e:
             self.logger.debug(f"Ошибка при проверке имени захвата: {e}")
@@ -160,7 +165,11 @@ class ShogunWorker(QThread):
                 name = self.capture.latest_capture_name()
                 # Проверяем тип данных и преобразуем в строку, если это кортеж
                 if isinstance(name, tuple):
-                    name_str = str(name[0]) if name and len(name) > 0 else "Нет активного тейка"
+                    # Проверяем, что имя существует и что первый элемент кортежа - True (успех)
+                    if name and len(name) > 1 and name[0]:
+                        name_str = str(name[1])  # Второй элемент - имя тейка при успехе
+                    else:
+                        name_str = "Нет активного тейка"
                 else:
                     name_str = str(name) if name else "Нет активного тейка"
                 
@@ -215,8 +224,9 @@ class ShogunWorker(QThread):
             
             # Получаем текущее имя захвата при подключении
             try:
-                result, capture_name = self.capture.capture_name()
-                if result:
+                result = self.capture.capture_name()
+                if isinstance(result, tuple) and len(result) > 1 and result[0]:
+                    capture_name = result[1]
                     self._current_capture_name = capture_name
                     self.logger.info(f"Текущее имя захвата: '{capture_name}'")
             except Exception as e:
@@ -237,8 +247,11 @@ class ShogunWorker(QThread):
         """
         try:
             # Выполняем простой запрос для проверки соединения
-            _ = str(self.capture.latest_capture_state())
-            return True
+            state = self.capture.latest_capture_state()
+            # Проверяем, что возвращается ожидаемый тип данных
+            if state is not None:
+                return True
+            return False
         except Exception as e:
             self.logger.debug(f"Тест соединения не пройден: {e}")
             return False
@@ -255,8 +268,10 @@ class ShogunWorker(QThread):
         
         try:
             # Простая проверка - пытаемся выполнить запрос к API
-            status = str(self.capture.latest_capture_state())
-            return True
+            state = self.capture.latest_capture_state()
+            if state is not None:
+                return True
+            return False
         except Exception as e:
             self.logger.debug(f"Ошибка проверки соединения: {e}")
             return await self.reconnect_shogun()
@@ -317,9 +332,22 @@ class ShogunWorker(QThread):
             if not self.capture:
                 return False
                 
-            status = str(self.capture.latest_capture_state())
-            is_recording = 'Started' in status
-            return is_recording
+            # Получаем состояние записи
+            state = self.capture.latest_capture_state()
+            
+            # Проверяем состояние на активность записи более надежным способом
+            # В зависимости от API, state может быть строкой, кортежем или объектом
+            if isinstance(state, tuple):
+                # Если state - кортеж, проверяем его элементы
+                if len(state) > 0:
+                    state_str = str(state[0])
+                    return 'Started' in state_str or 'Recording' in state_str
+            else:
+                # Если state - строка или другой тип, приводим к строке
+                state_str = str(state)
+                return 'Started' in state_str or 'Recording' in state_str
+            
+            return False
         except Exception as e:
             self.logger.debug(f"Ошибка проверки состояния Shogun Live: {e}")
             return False
@@ -347,26 +375,26 @@ class ShogunWorker(QThread):
             # Запускаем запись и проверяем результат
             start_result = self.capture.start_capture()
             
-            # Проверяем на ошибку "capture failed to start"
-            if isinstance(start_result, tuple) and len(start_result) > 0:
-                # Проверяем первый элемент кортежа (статус операции)
-                if start_result[0] is False:
+            # Проверяем ответ API, который может возвращаться в разных форматах
+            if start_result is None:
+                self.logger.error("API вернул None при запуске записи")
+                return None
+                
+            # Если start_result - кортеж, проверяем его элементы на ошибки
+            if isinstance(start_result, tuple):
+                # Обычно первый элемент кортежа - статус операции (True/False)
+                if len(start_result) > 0 and start_result[0] is False:
                     error_message = "Ошибка запуска записи"
                     
-                    # Проверяем наличие сообщения об ошибке во втором элементе
+                    # Второй элемент может содержать сообщение об ошибке
                     if len(start_result) > 1 and start_result[1]:
                         error_message = str(start_result[1])
                         
-                    # Проверяем на конкретную ошибку отсутствия подключения к камерам
-                    if "failed to start" in error_message.lower():
-                        self.logger.error(f"Ошибка запуска записи: {error_message}")
-                        self.capture_error_signal.emit("Не удалось запустить запись: камеры не подключены")
-                        return None
-                    else:
-                        self.logger.error(f"Ошибка запуска записи: {error_message}")
-                        self.capture_error_signal.emit(f"Ошибка: {error_message}")
-                        return None
+                    self.logger.error(f"Ошибка запуска записи: {error_message}")
+                    self.capture_error_signal.emit(error_message)
+                    return None
             
+            # Предполагаем, что запись успешно запущена
             self.logger.info("Запись начата в Shogun Live")
             
             # Получаем и возвращаем имя записи
@@ -384,10 +412,12 @@ class ShogunWorker(QThread):
                     
                     # Проверяем результат после переподключения
                     if isinstance(start_result, tuple) and len(start_result) > 0 and start_result[0] is False:
-                        if len(start_result) > 1 and "failed to start" in str(start_result[1]).lower():
-                            self.logger.error(f"Ошибка запуска записи после переподключения: {start_result[1]}")
-                            self.capture_error_signal.emit("Не удалось запустить запись: камеры не подключены")
-                            return None
+                        error_message = "Ошибка запуска записи после переподключения"
+                        if len(start_result) > 1:
+                            error_message = f"{error_message}: {start_result[1]}"
+                        self.logger.error(error_message)
+                        self.capture_error_signal.emit(error_message)
+                        return None
                     
                     self.logger.info("Запись начата в Shogun Live после переподключения")
                     
@@ -406,9 +436,13 @@ class ShogunWorker(QThread):
         Args:
             capture_name: Имя записи, полученное от Shogun Live
         """
-        # Обрабатываем случай, когда возвращается кортеж
+        # Обрабатываем возможные форматы ответа
         if isinstance(capture_name, tuple):
-            name_str = str(capture_name[0]) if capture_name and len(capture_name) > 0 else "Активная запись"
+            # Проверяем успешность операции и наличие имени
+            if len(capture_name) > 1 and capture_name[0]:
+                name_str = str(capture_name[1])
+            else:
+                name_str = "Активная запись"
         else:
             name_str = str(capture_name) if capture_name else "Активная запись"
             
@@ -433,7 +467,18 @@ class ShogunWorker(QThread):
                 self.take_name_signal.emit("Нет активной записи")
                 return True
                 
-            self.capture.stop_capture(0)
+            # Останавливаем запись
+            result = self.capture.stop_capture(0)
+            
+            # Проверяем результат операции
+            if isinstance(result, tuple) and len(result) > 0 and result[0] is False:
+                error_message = "Ошибка остановки записи"
+                if len(result) > 1 and result[1]:
+                    error_message = f"{error_message}: {result[1]}"
+                self.logger.error(error_message)
+                self.capture_error_signal.emit(error_message)
+                return False
+                
             self.logger.info("Запись остановлена в Shogun Live")
             self.take_name_signal.emit("Нет активной записи")
             return True
@@ -442,12 +487,23 @@ class ShogunWorker(QThread):
             # Пробуем переподключиться и повторить операцию
             if await self.reconnect_shogun():
                 try:
-                    self.capture.stop_capture(0)
+                    result = self.capture.stop_capture(0)
+                    
+                    # Проверяем результат после переподключения
+                    if isinstance(result, tuple) and len(result) > 0 and result[0] is False:
+                        error_message = "Ошибка остановки записи после переподключения"
+                        if len(result) > 1:
+                            error_message = f"{error_message}: {result[1]}"
+                        self.logger.error(error_message)
+                        self.capture_error_signal.emit(error_message)
+                        return False
+                        
                     self.logger.info("Запись остановлена в Shogun Live после переподключения")
                     self.take_name_signal.emit("Нет активной записи")
                     return True
                 except Exception as e2:
                     self.logger.error(f"Не удалось остановить запись после переподключения: {e2}")
+                    self.capture_error_signal.emit(f"Ошибка остановки записи: {e2}")
             return False
     
     async def set_capture_name(self, name: str) -> bool:
@@ -465,13 +521,27 @@ class ShogunWorker(QThread):
                 self.logger.error("Нет соединения с Shogun Live")
                 return False
                 
+            # Устанавливаем имя захвата
             result = self.capture.set_capture_name(name)
-            if result:
+            
+            # Проверяем результат операции
+            if isinstance(result, tuple):
+                if len(result) > 0 and result[0]:
+                    self.logger.info(f"Имя захвата установлено: '{name}'")
+                    self._current_capture_name = name
+                    return True
+                else:
+                    error_message = "Не удалось установить имя захвата"
+                    if len(result) > 1:
+                        error_message = f"{error_message}: {result[1]}"
+                    self.logger.error(error_message)
+                    return False
+            elif result:  # Если возвращается булево значение
                 self.logger.info(f"Имя захвата установлено: '{name}'")
                 self._current_capture_name = name
                 return True
             else:
-                self.logger.error(f"Не удалось установить имя захвата: {result}")
+                self.logger.error(f"Не удалось установить имя захвата")
                 return False
         except Exception as e:
             self.logger.error(f"Ошибка при установке имени захвата: {e}")
@@ -490,7 +560,7 @@ class ShogunWorker(QThread):
             except Exception as e:
                 self.logger.debug(f"Ошибка при закрытии соединения: {e}")
     
-    def start_capture(self):
+    def start_recording(self):
         """Начать запись в Shogun Live"""
         if not self.connected:
             self.logger.error("Невозможно начать запись: нет подключения к Shogun Live")
@@ -498,12 +568,9 @@ class ShogunWorker(QThread):
             return
         
         try:
-            # Генерируем имя захвата на основе текущего времени
-            capture_name = time.strftime("Capture_%Y%m%d_%H%M%S")
-            
             # Запускаем запись асинхронно
             asyncio.run_coroutine_threadsafe(
-                self._start_capture(capture_name), 
+                self.startcapture(), 
                 self.loop
             )
             
@@ -512,7 +579,7 @@ class ShogunWorker(QThread):
             self.logger.error(error_msg)
             self.capture_error_signal.emit(error_msg)
     
-    def stop_capture(self):
+    def stop_recording(self):
         """Остановить запись в Shogun Live"""
         if not self.connected:
             self.logger.error("Невозможно остановить запись: нет подключения к Shogun Live")
@@ -522,47 +589,9 @@ class ShogunWorker(QThread):
         try:
             # Останавливаем запись асинхронно
             asyncio.run_coroutine_threadsafe(
-                self._stop_capture(), 
+                self.stopcapture(), 
                 self.loop
             )
-            
-        except Exception as e:
-            error_msg = f"Ошибка при остановке записи: {str(e)}"
-            self.logger.error(error_msg)
-            self.capture_error_signal.emit(error_msg)
-    
-    async def _start_capture(self, capture_name):
-        """Внутренний метод для начала записи"""
-        try:
-            if not self.shogun_client:
-                raise Exception("Клиент Shogun не инициализирован")
-            
-            # Начинаем запись
-            await self.shogun_client.start_capture(capture_name)
-            self._is_recording = True
-            self.recording_signal.emit(True)
-            self.capture_name_changed_signal.emit(capture_name)
-            self.logger.info(f"Запись начата: {capture_name}")
-            
-        except Exception as e:
-            error_msg = f"Ошибка при запуске записи: {str(e)}"
-            self.logger.error(error_msg)
-            self.capture_error_signal.emit(error_msg)
-            self._is_recording = False
-            self.recording_signal.emit(False)
-    
-    async def _stop_capture(self):
-        """Внутренний метод для остановки записи"""
-        try:
-            if not self.shogun_client:
-                raise Exception("Клиент Shogun не инициализирован")
-            
-            # Останавливаем запись
-            await self.shogun_client.stop_capture()
-            self._is_recording = False
-            self.recording_signal.emit(False)
-            self.capture_name_changed_signal.emit("")
-            self.logger.info("Запись остановлена")
             
         except Exception as e:
             error_msg = f"Ошибка при остановке записи: {str(e)}"

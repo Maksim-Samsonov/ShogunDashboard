@@ -5,7 +5,7 @@
 import logging
 import time
 import asyncio
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from .hyperdeck_client import HyperDeckClient
@@ -89,7 +89,7 @@ class HyperDeckWorker(QThread):
         for device_id, ip in devices:
             try:
                 # Создаем нового клиента
-                client = HyperDeckClient(ip)
+                client = HyperDeckClient(device_id, ip)
                 
                 # Подключаемся асинхронно
                 success = self.loop.run_until_complete(client.connect())
@@ -128,13 +128,17 @@ class HyperDeckWorker(QThread):
                 self.logger.error(error_msg)
                 self.error_signal.emit(error_msg)
     
-    def start_recording(self, device_ids):
+    def start_recording(self, device_ids=None):
         """
         Запуск записи на устройствах HyperDeck
         
         Args:
-            device_ids: Список ID устройств для начала записи
+            device_ids: Список ID устройств для начала записи. Если None, то на всех устройствах.
         """
+        # Если device_ids не указаны, используем все подключенные устройства
+        if device_ids is None:
+            device_ids = list(self.devices.keys())
+            
         for device_id in device_ids:
             try:
                 if device_id in self.devices:
@@ -152,13 +156,17 @@ class HyperDeckWorker(QThread):
                 self.logger.error(error_msg)
                 self.error_signal.emit(error_msg)
     
-    def stop_recording(self, device_ids):
+    def stop_recording(self, device_ids=None):
         """
         Остановка записи на устройствах HyperDeck
         
         Args:
-            device_ids: Список ID устройств для остановки записи
+            device_ids: Список ID устройств для остановки записи. Если None, то на всех устройствах.
         """
+        # Если device_ids не указаны, используем все подключенные устройства
+        if device_ids is None:
+            device_ids = list(self.devices.keys())
+            
         for device_id in device_ids:
             try:
                 if device_id in self.devices:
@@ -175,6 +183,67 @@ class HyperDeckWorker(QThread):
                 error_msg = f"Ошибка при остановке записи на HyperDeck {device_id}: {e}"
                 self.logger.error(error_msg)
                 self.error_signal.emit(error_msg)
+    
+    def has_devices(self) -> bool:
+        """
+        Проверяет, есть ли доступные устройства HyperDeck
+        
+        Returns:
+            bool: True если есть хотя бы одно доступное устройство, иначе False
+        """
+        return len(self.devices) > 0
+    
+    def update_devices(self, device_list: List[Dict[str, Any]]) -> None:
+        """
+        Обновление списка устройств из конфигурации
+        
+        Args:
+            device_list: Список настроек устройств из конфигурации
+        """
+        self.logger.info(f"Обновление списка устройств HyperDeck: {len(device_list)} устройств")
+        
+        # Получаем список ID текущих устройств
+        current_device_ids = set(self.devices.keys())
+        
+        # Создаем список новых устройств
+        new_devices = []
+        for i, device_config in enumerate(device_list):
+            device_id = device_config.get('id', i + 1)
+            ip = device_config.get('ip', '')
+            port = device_config.get('port', 9993)
+            enabled = device_config.get('enabled', True)
+            
+            # Пропускаем отключенные устройства
+            if not enabled:
+                continue
+                
+            # Если у нас нет IP, пропускаем
+            if not ip:
+                continue
+                
+            # Добавляем устройство в список
+            new_devices.append((device_id, ip, port))
+            
+            # Если устройство уже подключено, удаляем его из списка текущих
+            if device_id in current_device_ids:
+                current_device_ids.remove(device_id)
+        
+        # Отключаем устройства, которых нет в новой конфигурации
+        self.disconnect_devices(current_device_ids)
+        
+        # Подключаем новые устройства
+        for device_id, ip, port in new_devices:
+            # Если устройство уже подключено, проверяем параметры
+            if device_id in self.devices:
+                client = self.devices[device_id]
+                # Если параметры изменились, переподключаем
+                if client.host != ip or client.port != port:
+                    self.logger.info(f"Переподключение HyperDeck {device_id} ({ip}:{port})")
+                    self.disconnect_devices([device_id])
+                    self.connect_devices([(device_id, ip)])
+            else:
+                # Подключаем новое устройство
+                self.connect_devices([(device_id, ip)])
     
     def stop(self):
         """Остановка рабочего потока"""

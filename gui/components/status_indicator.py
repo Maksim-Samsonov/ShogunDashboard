@@ -40,7 +40,6 @@ class StatusIndicator(QWidget):
         self.indicator = QLabel()
         self.indicator.setMinimumSize(16, 16)
         self.indicator.setMaximumSize(16, 16)
-        self.set_status(self.STATUS_INACTIVE)
         
         # Метка с текстом
         self.label = QLabel(label)
@@ -54,6 +53,9 @@ class StatusIndicator(QWidget):
         layout.addWidget(self.status_text, 1)  # 1 = stretch factor
         
         self.setLayout(layout)
+        
+        # Установка начального статуса
+        self.set_status(self.STATUS_INACTIVE)
     
     def set_status(self, status, text=None):
         """
@@ -90,7 +92,8 @@ class StatusIndicator(QWidget):
         """)
         
         # Обновляем текст статуса
-        if text is not None:
-            self.status_text.setText(text)
-        else:
-            self.status_text.setText(default_text)
+        if hasattr(self, 'status_text'):
+            if text is not None:
+                self.status_text.setText(text)
+            else:
+                self.status_text.setText(default_text)

@@ -13,6 +13,94 @@ import config
 from gui.components.status_indicator import StatusIndicator
 from gui.log_panel import LogPanel
 
+class StatusWidget(QGroupBox):
+    """Виджет статусов всех подключенных устройств"""
+    
+    def __init__(self, title):
+        super().__init__(title)
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QGridLayout()
+        layout.setSpacing(10)
+        
+        # Shogun Status
+        self.shogun_indicator = StatusIndicator()
+        self.shogun_info = QLabel("localhost")
+        layout.addWidget(self.shogun_info, 0, 0)
+        layout.addWidget(QLabel("Shogun:"), 0, 1)
+        layout.addWidget(self.shogun_indicator, 0, 2)
+        
+        # OSC Server Status
+        self.osc_indicator = StatusIndicator()
+        self.osc_info = QLabel("")  # Will be set in update_info
+        layout.addWidget(self.osc_info, 1, 0)
+        layout.addWidget(QLabel("OSC Server:"), 1, 1)
+        layout.addWidget(self.osc_indicator, 1, 2)
+        
+        # HyperDeck Status
+        self.hyperdeck_indicators = []
+        self.hyperdeck_infos = []
+        for i in range(3):
+            indicator = StatusIndicator()
+            self.hyperdeck_indicators.append(indicator)
+            info_label = QLabel("")  # Will be set in update_info
+            self.hyperdeck_infos.append(info_label)
+            layout.addWidget(info_label, i+2, 0)
+            layout.addWidget(QLabel(f"HyperDeck {i+1}:"), i+2, 1)
+            layout.addWidget(indicator, i+2, 2)
+        
+        self.setLayout(layout)
+        
+        # Initialize with default info
+        self.update_info()
+    
+    def update_info(self):
+        """Update connection info for all components"""
+        import config
+        
+        # Update OSC info
+        self.osc_info.setText(f"{config.DEFAULT_OSC_IP}:{config.DEFAULT_OSC_PORT}")
+        
+        # Update HyperDeck info from settings
+        for i, info_label in enumerate(self.hyperdeck_infos):
+            if i < len(config.HYPERDECK_DEVICES):
+                device = config.HYPERDECK_DEVICES[i]
+                if device.get('enabled', True):
+                    info_label.setText(f"{device['ip']}:{device['port']}")
+                else:
+                    info_label.setText("Не активен")
+            else:
+                info_label.setText("Не настроен")
+
+class RecordingControls(QGroupBox):
+    """Панель управления записью"""
+    
+    # Сигналы для управления записью
+    start_recording = pyqtSignal()
+    stop_recording = pyqtSignal()
+    
+    def __init__(self):
+        super().__init__("Recording Controls")
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QHBoxLayout()
+        
+        self.start_btn = QPushButton("Start Recording")
+        self.start_btn.setIcon(QIcon.fromTheme("media-record"))
+        self.stop_btn = QPushButton("Stop Recording")
+        self.stop_btn.setIcon(QIcon.fromTheme("media-playback-stop"))
+        
+        layout.addWidget(self.start_btn)
+        layout.addWidget(self.stop_btn)
+        
+        self.setLayout(layout)
+        
+        # Connect signals
+        self.start_btn.clicked.connect(self.start_recording)
+        self.stop_btn.clicked.connect(self.stop_recording)
+
 class DeviceStatusPanel(QGroupBox):
     """Панель статусов всех подключенных устройств"""
     
@@ -244,3 +332,45 @@ class DashboardPanel(QWidget):
         splitter.setSizes([400, 200])
         
         layout.addWidget(splitter)
+        
+        # Создаем панель статусов для информации о подключениях
+        self.status_widget = StatusWidget("System Status")
+        layout.addWidget(self.status_widget)
+        
+        # Создаем панель управления записью
+        self.recording_controls = RecordingControls()
+        layout.addWidget(self.recording_controls)
+        
+        # Подключаем сигналы от панели управления записью
+        self.recording_controls.start_recording.connect(
+            self.start_all_recording_signal)
+        self.recording_controls.stop_recording.connect(
+            self.stop_all_recording_signal)
+    
+    def update_status(self, component: str, status: bool):
+        """Update status indicator for a specific component"""
+        if component == "shogun":
+            if hasattr(self.status_widget, 'shogun_indicator'):
+                self.status_widget.shogun_indicator.set_status(status)
+            if hasattr(self.status_panel, 'update_shogun_connection'):
+                self.status_panel.update_shogun_connection(status)
+        elif component == "osc":
+            if hasattr(self.status_widget, 'osc_indicator'):
+                self.status_widget.osc_indicator.set_status(status)
+            if hasattr(self.status_panel, 'update_osc_status'):
+                self.status_panel.update_osc_status(status)
+        elif component.startswith("hyperdeck_"):
+            try:
+                index = int(component.split("_")[1]) - 1
+                if hasattr(self.status_widget, 'hyperdeck_indicators') and 0 <= index < len(self.status_widget.hyperdeck_indicators):
+                    self.status_widget.hyperdeck_indicators[index].set_status(status)
+                if hasattr(self.status_panel, 'update_hyperdeck_connection') and 0 <= index < len(self.status_panel.hyperdeck_status):
+                    self.status_panel.update_hyperdeck_connection(index, status)
+            except (IndexError, ValueError) as e:
+                # Логируем ошибку, но не прерываем выполнение
+                self.logger.debug(f"Ошибка при обновлении статуса HyperDeck: {e}")
+    
+    def add_log_message(self, message: str, level: str = 'INFO'):
+        """Add a colored message to the log panel"""
+        if hasattr(self, 'log_panel') and hasattr(self.log_panel, 'add_log_message'):
+            self.log_panel.add_log_message(message, level)
