@@ -1,0 +1,6 @@
+PyQt5>=5.15.0
+vicon-core-api>=1.0.0
+shogun-live-api>=1.0.0
+python-osc>=1.8.0
+psutil>=5.9.0
+typing-extensions>=4.0.0
